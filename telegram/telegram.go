@@ -85,6 +85,9 @@ type Bot struct {
 	// Chats are the operators' chats: private ones, or a group that is one operator for a whole team. Only these chats
 	// take tickets and answer them.
 	Chats []int64
+	// IsOperator, when set, says whether a chat is an operator's instead of Chats: for operators the app keeps itself, who
+	// come and go while it runs. The desk asks it while the store holds a ticket, so it answers at once.
+	IsOperator func(chat int64) bool
 	// API is where the Bot API is: Telegram's, or a Bot API server of your own.
 	API string
 	// Texts are what the bot says, English to begin with.
@@ -107,7 +110,8 @@ func (b *Bot) address(method string) string { return b.API + "/bot" + b.token + 
 // prefix starts the name of each of the bot's operators.
 const prefix = "telegram:"
 
-// Serves says the operator is one of the bot's chats. A chat gone from Chats is served no more, so its tickets move on.
+// Serves says the operator is one of the bot's chats. A chat that is no operator's any more is served no more, so its
+// tickets move on.
 func (b *Bot) Serves(operator string) bool {
 	_, ok := b.chatOf(operator)
 	return ok
@@ -117,7 +121,15 @@ func (b *Bot) Serves(operator string) bool {
 func (b *Bot) chatOf(operator string) (int64, bool) {
 	id, ours := strings.CutPrefix(operator, prefix)
 	chat, err := strconv.ParseInt(id, 10, 64)
-	return chat, ours && err == nil && slices.Contains(b.Chats, chat)
+	return chat, ours && err == nil && b.operator(chat)
+}
+
+// operator says a chat is an operator's.
+func (b *Bot) operator(chat int64) bool {
+	if b.IsOperator != nil {
+		return b.IsOperator(chat)
+	}
+	return slices.Contains(b.Chats, chat)
 }
 
 // Deliver brings a user's message to the chat of the ticket's operator. The desk gives the bot only its own operators.
@@ -183,7 +195,7 @@ func (b *Bot) Listen(ctx context.Context, desk *hotline.Desk) {
 		}
 		for _, update := range updates {
 			offset = update.UpdateID + 1
-			if said := update.Message; said != nil && !b.take(ctx, desk, *said) && slices.Contains(b.Chats, said.Chat.ID) {
+			if said := update.Message; said != nil && !b.take(ctx, desk, *said) && b.operator(said.Chat.ID) {
 				b.say(ctx, said.Chat.ID, b.Texts.Help)
 			}
 		}
@@ -221,7 +233,7 @@ func (b *Bot) Take(ctx context.Context, desk *hotline.Desk, raw json.RawMessage)
 // take is what an operator wrote, if it is the bot's: a shift command, or a reply that goes into its ticket and gets a
 // thumbs-up. When the reply does not go, the bot says why.
 func (b *Bot) take(ctx context.Context, desk *hotline.Desk, said message) bool {
-	if !slices.Contains(b.Chats, said.Chat.ID) {
+	if !b.operator(said.Chat.ID) {
 		return false
 	}
 	switch strings.TrimSpace(said.Text) {

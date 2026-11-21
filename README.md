@@ -115,7 +115,7 @@ Operators get tickets only on shift. An adapter opens and closes a shift with `d
 
 - `/online` opens the operator's shift and `/offline` closes it. On `/offline`, the bot says how many open tickets the operator leaves.
 - An operator answers by replying to the bot's message or to one of its files. `/close` at the start of a reply closes the ticket. A thumbs-up on the reply means it went into the ticket, and where Telegram takes no reaction, the bot says so in words. Only words go from Telegram into a ticket for now.
-- A chat removed from `Chats` is served no more, so its tickets move on.
+- A chat removed from `Chats` is served no more, so its tickets move on. For operators your app keeps itself, who come and go while it runs, set `bot.IsOperator` instead of `Chats`.
 - `bot.Texts` are the bot's words, `telegram.English` to begin with. `bot.About` says what a heading shows after `#12 · `: the user by default, or anything made of `Ticket.Fields`.
 
 A bot your app already uses, for its own commands, cannot be polled twice: Telegram answers a second `getUpdates` with 409. Read the updates in your app, skip `Listen`, and hand each message to `Take`. It answers whether the message was the bot's: a shift command or a reply to a ticket, in an operator's chat. Everything else is your app's, such as `/start`.

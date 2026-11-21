@@ -174,7 +174,10 @@ func TestShared(t *testing.T) {
 	api := &fakeAPI{calls: make(chan string, 20)}
 	server := httptest.NewServer(api)
 	defer server.Close()
-	bot := telegram.New("token", 42)
+	bot := telegram.New("token") // the app says who the operators are
+	var operators sync.Map
+	operators.Store(int64(42), true)
+	bot.IsOperator = func(chat int64) bool { _, ok := operators.Load(chat); return ok }
 	bot.API = server.URL
 	bot.Texts.ShiftOpen = "Смена открыта."
 	bot.About = func(ticket hotline.Ticket) string { return ticket.Fields["topic"] + " · " + ticket.User }
@@ -200,4 +203,9 @@ func TestShared(t *testing.T) {
 		t.Fatal(err)
 	}
 	api.expect(t, "42 sendMessage: #1 · Сделка · ann\n\nwhere is my knife")
+
+	operators.Delete(int64(42)) // the app counts 42 an operator no more
+	if bot.Take(ctx, desk, written(42, "/close", "#1 · Сделка · ann")) {
+		t.Fatal("a chat that is no operator's any more answered a ticket")
+	}
 }
