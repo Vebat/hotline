@@ -276,3 +276,28 @@ func TestHandler(t *testing.T) {
 		t.Errorf("a body that is not a form got %d %s", response.Code, response.Body)
 	}
 }
+
+func TestFields(t *testing.T) {
+	tickets := make(chan hotline.Ticket, 1)
+	support := hotline.Operator("support", hotline.ListenerFunc(func(_ context.Context, ticket hotline.Ticket, _ hotline.Message) error {
+		tickets <- ticket
+		return nil
+	}))
+	desk := hotline.New(&hotline.Memory{}, []hotline.Operators{support}, nil)
+	ctx := start(t, desk)
+	fields := map[string]string{"topic": "order"}
+	first, err := desk.Write(ctx, "ann", "", hotline.Draft{Text: "where is my knife", Fields: fields})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields["topic"] = "changed after" // the ticket keeps its own copy
+	if got := receive(t, tickets); got.Fields["topic"] != "order" {
+		t.Fatalf("the operator got the fields %v", got.Fields)
+	}
+	if _, err := desk.Write(ctx, "ann", first.TicketID, hotline.Draft{Text: "and", Fields: fields}); err == nil {
+		t.Fatal("fields went into an open ticket")
+	}
+	if _, err := desk.Answer(ctx, first.TicketID, hotline.Draft{Text: "here", Fields: fields}); err == nil {
+		t.Fatal("an answer carried fields")
+	}
+}

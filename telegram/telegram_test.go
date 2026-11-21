@@ -26,15 +26,39 @@ type fakeAPI struct {
 	calls   chan string
 }
 
-func (f *fakeAPI) push(chat int64, text, repliedTo string) {
+// written is a message an operator wrote, as Telegram puts it in an update: repliedTo is the bot's message it answers.
+func written(chat int64, text, repliedTo string) json.RawMessage {
 	said := map[string]any{"message_id": 9, "text": text, "chat": map[string]int64{"id": chat}}
 	if repliedTo != "" {
 		said["reply_to_message"] = map[string]any{"caption": repliedTo, "from": map[string]bool{"is_bot": true}}
 	}
 	encoded, _ := json.Marshal(said)
+	return encoded
+}
+
+func (f *fakeAPI) push(chat int64, text, repliedTo string) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
-	f.updates = append(f.updates, string(encoded))
+	f.updates = append(f.updates, string(written(chat, text, repliedTo)))
+}
+
+// expect waits for these calls to the Bot API, in any order.
+func (f *fakeAPI) expect(t *testing.T, want ...string) {
+	t.Helper()
+	var got []string
+	for range want {
+		select {
+		case call := <-f.calls:
+			got = append(got, call)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("telegram got only %q, want %q", got, want)
+		}
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("telegram got %q, want %q", got, want)
+	}
 }
 
 func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -94,23 +118,9 @@ func TestBot(t *testing.T) {
 	go desk.Run(ctx)
 	go bot.Listen(ctx, desk)
 
-	// expect waits for these calls to the Bot API, in any order.
 	expect := func(want ...string) {
 		t.Helper()
-		var got []string
-		for range want {
-			select {
-			case call := <-api.calls:
-				got = append(got, call)
-			case <-time.After(2 * time.Second):
-				t.Fatalf("telegram got only %q, want %q", got, want)
-			}
-		}
-		slices.Sort(got)
-		slices.Sort(want)
-		if !slices.Equal(got, want) {
-			t.Fatalf("telegram got %q, want %q", got, want)
-		}
+		api.expect(t, want...)
 	}
 	answered := func(text string, closed bool) {
 		t.Helper()
@@ -158,4 +168,36 @@ func TestBot(t *testing.T) {
 	answered("fixed, thanks for the screenshot", true)
 	api.push(43, "one more thing", "#1 · ann")
 	expect("43 sendMessage: #1 is closed: the answer did not go.")
+}
+
+func TestShared(t *testing.T) {
+	api := &fakeAPI{calls: make(chan string, 20)}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	bot := telegram.New("token", 42)
+	bot.API = server.URL
+	bot.Texts.ShiftOpen = "Смена открыта."
+	bot.About = func(ticket hotline.Ticket) string { return ticket.Fields["topic"] + " · " + ticket.User }
+	desk := hotline.New(&hotline.Memory{}, []hotline.Operators{bot}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go desk.Run(ctx)
+
+	for _, notOurs := range []json.RawMessage{
+		written(42, "/start token", ""),             // the app's command
+		written(7, "/online", ""),                   // not an operator's chat
+		written(42, "thanks", "Your deal is paid."), // a reply to the app's own message
+	} {
+		if bot.Take(ctx, desk, notOurs) {
+			t.Fatalf("the bot took %s, which is the app's", notOurs)
+		}
+	}
+	if !bot.Take(ctx, desk, written(42, "/online", "")) {
+		t.Fatal("the bot left /online to the app")
+	}
+	api.expect(t, "42 sendMessage: Смена открыта.")
+	if _, err := desk.Write(ctx, "ann", "", hotline.Draft{Text: "where is my knife", Fields: map[string]string{"topic": "Сделка"}}); err != nil {
+		t.Fatal(err)
+	}
+	api.expect(t, "42 sendMessage: #1 · Сделка · ann\n\nwhere is my knife")
 }

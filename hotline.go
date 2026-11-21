@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -34,6 +35,9 @@ type Ticket struct {
 	Closed     bool
 	// Operator is who has the ticket: what users write in it goes to them. Empty until its first message is delivered.
 	Operator string
+	// Fields are what the host app knows about the ticket, as its topic or an order: given when it opens, kept with it,
+	// and shown by adapters that care.
+	Fields map[string]string
 }
 
 // Message is what one side said. A message may close its ticket, with words or without: nothing more goes in after it.
@@ -52,6 +56,8 @@ type Draft struct {
 	Text  string
 	Files [][]byte
 	Close bool
+	// Fields go to the ticket a draft opens; a draft into an open ticket has none.
+	Fields map[string]string
 }
 
 // File is an attachment. Its type is sniffed from the bytes, never taken from the sender, and it has no name: a name is
@@ -183,13 +189,17 @@ func (d *Desk) Write(ctx context.Context, user, ticketID string, draft Draft) (M
 	if user == "" {
 		return Message{}, errors.New("hotline: no user")
 	}
+	if ticketID != "" && len(draft.Fields) > 0 {
+		return Message{}, errors.New("hotline: fields are given only when a ticket opens")
+	}
 	m, err := d.message(draft, UserSide, ticketID)
 	if err != nil {
 		return m, err
 	}
 	closes := m.Closed
 	if ticketID == "" {
-		m, err = d.store.Open(ctx, Ticket{User: user, Unanswered: 1, Closed: closes}, m, func(open int) error {
+		opened := Ticket{User: user, Unanswered: 1, Closed: closes, Fields: maps.Clone(draft.Fields)}
+		m, err = d.store.Open(ctx, opened, m, func(open int) error {
 			if open >= d.Limits.OpenTickets {
 				return ErrManyTickets
 			}
@@ -218,6 +228,9 @@ func (d *Desk) Write(ctx context.Context, user, ticketID string, draft Draft) (M
 
 // Answer is the operator's side: an operator adapter calls it with what an operator wrote in a ticket.
 func (d *Desk) Answer(ctx context.Context, ticketID string, draft Draft) (Message, error) {
+	if len(draft.Fields) > 0 {
+		return Message{}, errors.New("hotline: fields are given only when a ticket opens")
+	}
 	m, err := d.message(draft, OperatorSide, ticketID)
 	if err != nil {
 		return m, err

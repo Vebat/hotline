@@ -28,7 +28,7 @@ func Run(t *testing.T, fresh func() hotline.Store) {
 	}
 	open := func(t *testing.T, s hotline.Store, who, text string) hotline.Message {
 		t.Helper()
-		m, err := s.Open(ctx, hotline.Ticket{User: who, Unanswered: 1}, user(text), func(int) error { return nil })
+		m, err := s.Open(ctx, hotline.Ticket{User: who, Unanswered: 1, Fields: map[string]string{"by": who, "topic": "order"}}, user(text), func(int) error { return nil })
 		if err != nil || m.ID == "" || m.TicketID == "" {
 			t.Fatalf("opened %+v, %v", m, err)
 		}
@@ -109,7 +109,7 @@ func Run(t *testing.T, fresh func() hotline.Store) {
 		if _, err := s.Add(ctx, last, func(t *hotline.Ticket) error { seen = *t; return nil }); err != nil {
 			t.Fatal(err)
 		}
-		if seen.ID != first.TicketID || seen.User != "ann" || seen.Unanswered != 7 || seen.Closed {
+		if seen.ID != first.TicketID || seen.User != "ann" || seen.Unanswered != 7 || seen.Closed || seen.Fields["by"] != "ann" {
 			t.Fatalf("the ticket stands as %+v", seen)
 		}
 		same(t, drain(t, s), []string{"one", "two", "three"})
@@ -153,7 +153,8 @@ func Run(t *testing.T, fresh func() hotline.Store) {
 		first := open(t, s, "ann", "one")
 		open(t, s, "bob", "two")
 		ticket, m, ok, err := s.Next(ctx, 0)
-		if !ok || err != nil || m.ID != first.ID || m.Text != "one" || ticket.ID != first.TicketID || ticket.User != "ann" {
+		if !ok || err != nil || m.ID != first.ID || m.Text != "one" || ticket.ID != first.TicketID || ticket.User != "ann" ||
+			!maps.Equal(ticket.Fields, map[string]string{"by": "ann", "topic": "order"}) {
 			t.Fatalf("next gave %+v of %+v, %v, %v", m, ticket, ok, err)
 		}
 		if _, again, _, _ := s.Next(ctx, time.Hour); again.ID != first.ID {

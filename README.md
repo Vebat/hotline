@@ -26,6 +26,7 @@ Users write from your app: a message, with files if they need to. Operators answ
 - `Limits` cap a message's characters, its files, the size of each file, how many tickets a user has open and how many messages a user writes in a row before an operator answers. The defaults are 2000 characters, 3 files of 8 MB, 5 open tickets and 5 messages in a row.
 - A file's type is sniffed from its bytes, never taken from the sender, and has to be one of `Limits.Types`: PNG, JPEG, PDF and plain text by default. File names are dropped, since a name is one more thing the sender controls. If you serve a file, send it with its `Type` and `X-Content-Type-Options: nosniff`. For example, an SVG without an XML header sniffs as plain text, and that header keeps it plain text in the browser.
 - A draft the desk does not take is `ErrBadMessage`, and one of `ErrEmpty`, `ErrNotText`, `ErrLongText`, `ErrManyFiles`, `ErrLargeFile` or `ErrFileType` says why.
+- `Draft.Fields` hold what your app knows about a new ticket, such as its topic or an order. They are given when the ticket opens, the store keeps them in `Ticket.Fields`, and adapters may show them. A draft into an open ticket, or an answer, carries none.
 
 ## Use
 
@@ -115,6 +116,17 @@ Operators get tickets only on shift. An adapter opens and closes a shift with `d
 - `/online` opens the operator's shift and `/offline` closes it. On `/offline`, the bot says how many open tickets the operator leaves.
 - An operator answers by replying to the bot's message or to one of its files. `/close` at the start of a reply closes the ticket. A thumbs-up on the reply means it went into the ticket, and where Telegram takes no reaction, the bot says so in words. Only words go from Telegram into a ticket for now.
 - A chat removed from `Chats` is served no more, so its tickets move on.
+- `bot.Texts` are the bot's words, `telegram.English` to begin with. `bot.About` says what a heading shows after `#12 · `: the user by default, or anything made of `Ticket.Fields`.
+
+A bot your app already uses, for its own commands, cannot be polled twice: Telegram answers a second `getUpdates` with 409. Read the updates in your app, skip `Listen`, and hand each message to `Take`. It answers whether the message was the bot's: a shift command or a reply to a ticket, in an operator's chat. Everything else is your app's, such as `/start`.
+
+```go
+for _, update := range updates {
+	if !bot.Take(ctx, desk, update.Message) { // update.Message is json.RawMessage
+		handleYourself(update)
+	}
+}
+```
 
 ## Not here yet
 
