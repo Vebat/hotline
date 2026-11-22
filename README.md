@@ -128,6 +128,8 @@ for _, update := range updates {
 }
 ```
 
+Such an app can ask the Bot API for its own work through the same bot: `bot.Call(ctx, method, body, &result)`. A method Telegram did not do is a `*telegram.Refusal` with its error code, such as 403 for a chat that blocked the bot.
+
 ## Not here yet
 
 - Reading a ticket back over HTTP, and a list of tickets that wait for an answer: both need a read method on `Store`.

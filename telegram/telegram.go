@@ -159,7 +159,7 @@ func (b *Bot) deliverTo(ctx context.Context, chat int64, t hotline.Ticket, m hot
 	var sent struct {
 		MessageID int64 `json:"message_id"`
 	}
-	if err := b.call(ctx, "sendMessage", map[string]any{"chat_id": chat, "text": text}, &sent); err != nil {
+	if err := b.Call(ctx, "sendMessage", map[string]any{"chat_id": chat, "text": text}, &sent); err != nil {
 		return err
 	}
 	for i, file := range m.Files {
@@ -182,7 +182,7 @@ func (b *Bot) Listen(ctx context.Context, desk *hotline.Desk) {
 			UpdateID int64    `json:"update_id"`
 			Message  *message `json:"message"`
 		}
-		err := b.call(ctx, "getUpdates", map[string]any{"offset": offset, "timeout": 50, "allowed_updates": []string{"message"}}, &updates)
+		err := b.Call(ctx, "getUpdates", map[string]any{"offset": offset, "timeout": 50, "allowed_updates": []string{"message"}}, &updates)
 		if err != nil {
 			if ctx.Err() == nil {
 				slog.Warn("telegram: updates not read", "error", err)
@@ -292,7 +292,7 @@ func (b *Bot) shift(ctx context.Context, desk *hotline.Desk, chatID int64, on bo
 
 // react puts a thumbs-up on a reply that went into its ticket. Where Telegram takes no reaction, words say it.
 func (b *Bot) react(ctx context.Context, chatID, messageID int64, ticket string) {
-	err := b.call(ctx, "setMessageReaction", map[string]any{
+	err := b.Call(ctx, "setMessageReaction", map[string]any{
 		"chat_id": chatID, "message_id": messageID, "reaction": []map[string]string{{"type": "emoji", "emoji": "👍"}},
 	}, nil)
 	if err != nil {
@@ -301,13 +301,14 @@ func (b *Bot) react(ctx context.Context, chatID, messageID int64, ticket string)
 }
 
 func (b *Bot) say(ctx context.Context, chatID int64, text string) {
-	if err := b.call(ctx, "sendMessage", map[string]any{"chat_id": chatID, "text": text}, nil); err != nil {
+	if err := b.Call(ctx, "sendMessage", map[string]any{"chat_id": chatID, "text": text}, nil); err != nil {
 		slog.Warn("telegram: bot did not answer", "error", err)
 	}
 }
 
-// call asks the Bot API one method.
-func (b *Bot) call(ctx context.Context, method string, body, result any) error {
+// Call asks the Bot API one method, for an app that shares the bot: body goes as JSON, and what Telegram answers goes into
+// result unless it is nil. A method Telegram does not do is a *Refusal.
+func (b *Bot) Call(ctx context.Context, method string, body, result any) error {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", method, err)
@@ -361,16 +362,29 @@ func (b *Bot) do(request *http.Request, method string, result any) error {
 	var answer struct {
 		OK          bool            `json:"ok"`
 		Result      json.RawMessage `json:"result"`
+		ErrorCode   int             `json:"error_code"`
 		Description string          `json:"description"`
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&answer); err != nil {
 		return fmt.Errorf("read telegram's answer to %s (%d): %w", method, response.StatusCode, err)
 	}
 	if !answer.OK {
-		return fmt.Errorf("telegram refused %s (%d): %s", method, response.StatusCode, answer.Description)
+		return &Refusal{Method: method, Code: answer.ErrorCode, Description: answer.Description}
 	}
 	if result == nil {
 		return nil
 	}
 	return json.Unmarshal(answer.Result, result)
+}
+
+// Refusal is the Bot API's answer to a method it did not do, with Telegram's error code and words: 403 is a chat that
+// blocked the bot, for one.
+type Refusal struct {
+	Method      string
+	Code        int
+	Description string
+}
+
+func (refused *Refusal) Error() string {
+	return fmt.Sprintf("telegram refused %s (%d): %s", refused.Method, refused.Code, refused.Description)
 }

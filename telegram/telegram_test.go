@@ -3,6 +3,7 @@ package telegram_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -207,5 +208,20 @@ func TestShared(t *testing.T) {
 	operators.Delete(int64(42)) // the app counts 42 an operator no more
 	if bot.Take(ctx, desk, written(42, "/close", "#1 · Сделка · ann")) {
 		t.Fatal("a chat that is no operator's any more answered a ticket")
+	}
+}
+
+func TestCallSaysWhatTelegramRefused(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}`)
+	}))
+	defer server.Close()
+	bot := telegram.New("123:secret")
+	bot.API = server.URL
+	err := bot.Call(context.Background(), "sendMessage", map[string]any{"chat_id": 7, "text": "hi"}, nil)
+	var refused *telegram.Refusal
+	if !errors.As(err, &refused) || refused.Code != 403 || refused.Method != "sendMessage" || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("got %v", err)
 	}
 }
